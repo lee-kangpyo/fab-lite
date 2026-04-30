@@ -4,3 +4,4 @@ __pycache__/
 postgres_data/
 alembic/versions/__pycache__/
 .pytest_cache/
+.venv/

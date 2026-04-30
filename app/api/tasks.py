@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.task import Task
-from app.schemas.task import TaskCreate, TaskResponse, TaskStatusUpdate, TaskUpdate
+from app.schemas.task import VALID_PRIORITIES, VALID_STATUSES, TaskCreate, TaskResponse, TaskStatusUpdate, TaskUpdate
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -22,8 +22,8 @@ async def create_task(body: TaskCreate, db: AsyncSession = Depends(get_db)):
 
 @router.get("", response_model=list[TaskResponse])
 async def list_tasks(
-    status: str | None = Query(default=None, pattern="^(todo|in_progress|done|cancelled)$"),
-    priority: str | None = Query(default=None, pattern="^(low|medium|high|urgent)$"),
+    status: str | None = Query(default=None, pattern=VALID_STATUSES),
+    priority: str | None = Query(default=None, pattern=VALID_PRIORITIES),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = select(Task)

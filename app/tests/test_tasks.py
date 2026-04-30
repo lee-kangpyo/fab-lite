@@ -80,3 +80,11 @@ async def test_delete_task(client):
 async def test_invalid_priority(client):
     resp = await client.post("/api/tasks", json={"title": "test", "priority": "invalid"})
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_invalid_status(client):
+    create_resp = await client.post("/api/tasks", json={"title": "상태테스트"})
+    task_id = create_resp.json()["id"]
+    resp = await client.patch(f"/api/tasks/{task_id}/status", json={"status": "invalid"})
+    assert resp.status_code == 422
