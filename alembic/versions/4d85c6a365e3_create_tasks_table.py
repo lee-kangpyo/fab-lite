@@ -26,7 +26,7 @@ def upgrade() -> None:
     sa.Column('status', sa.Enum('todo', 'in_progress', 'done', 'cancelled', name='task_status'), nullable=False),
     sa.Column('due_date', sa.DateTime(timezone=True), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False, onupdate=sa.text('now()')),
     sa.PrimaryKeyConstraint('id')
     )
 
