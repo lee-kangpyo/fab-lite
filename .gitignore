@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.env
+postgres_data/
+alembic/versions/__pycache__/
+.pytest_cache/
