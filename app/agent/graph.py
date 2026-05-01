@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
@@ -43,12 +44,9 @@ async def _extract_with_llm(state: AgentState, llm) -> AgentState:
     messages = state.get("messages", [])
     last_human = None
     for msg in reversed(messages):
-        if isinstance(msg, (type(msg).__class__, )):
-            if hasattr(msg, "type") and msg.type == "human":
-                last_human = msg.content
-                break
-
-    from langchain_core.messages import HumanMessage, SystemMessage
+        if isinstance(msg, HumanMessage):
+            last_human = msg.content
+            break
 
     if not last_human:
         return {"task_data": {}, "missing_fields": []}
@@ -57,7 +55,7 @@ async def _extract_with_llm(state: AgentState, llm) -> AgentState:
     if intent == "create":
         prompt = f"""사용자 메시지에서 태스크 생성 정보를 추출하세요.
         필드: title(필수), description(선택), priority(선택: low/medium/high/urgent), due_date(선택: ISO형식)
-        JSON만 반환하세요. 추출할 수 없는 필드는 빈 문자열로 두세요.
+        JSON만 반환하세요. 추출할 수 있는 필드는 빈 문자열로 두세요.
 
         사용자 메시지: {last_human}"""
     elif intent == "update":
@@ -96,10 +94,9 @@ async def _extract_with_llm(state: AgentState, llm) -> AgentState:
 async def _do_list(state: AgentState, tools_by_name: dict) -> AgentState:
     tool = tools_by_name.get("list_tasks")
     if not tool:
-        return {"messages": [type("AIMessage", (), {"content": "목록 도구를 찾을 수 없습니다."})()]}
+        return {"messages": [AIMessage(content="목록 도구를 찾을 수 없습니다.")], "needs_confirmation": False}
 
     result = await tool.ainvoke({})
-    from langchain_core.messages import AIMessage
     return {"messages": [AIMessage(content=f"태스크 목록:\n{result}")], "confirmed": True}
 
 
@@ -127,7 +124,7 @@ def build_graph(checkpointer=None) -> "CompiledGraph":
     workflow.add_node("list_action", lambda s: _do_list(s, tools_by_name))
     workflow.add_node("respond", respond)
     workflow.add_node("cancel", lambda s: {
-        "messages": [type("AIMessage", (), {"content": "작업이 취소되었습니다."})()],
+        "messages": [AIMessage(content="작업이 취소되었습니다.")],
         "needs_confirmation": False,
     })
 
