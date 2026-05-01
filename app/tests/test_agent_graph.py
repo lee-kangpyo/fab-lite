@@ -1,6 +1,18 @@
 import pytest
 
+from unittest.mock import AsyncMock, MagicMock, patch
+from langchain_core.messages import HumanMessage, AIMessage
+from langgraph.checkpoint.memory import MemorySaver
+
 from app.agent.state import AgentState
+from app.agent.graph import build_graph
+
+
+@pytest.mark.asyncio
+async def test_build_graph_creates_compiled_graph():
+    graph = build_graph(checkpointer=MemorySaver())
+    assert graph is not None
+    assert hasattr(graph, "ainvoke")
 
 
 @pytest.mark.asyncio
