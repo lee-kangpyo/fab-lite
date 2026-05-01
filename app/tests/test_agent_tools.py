@@ -59,6 +59,20 @@ async def test_delete_task_tool(client):
 
 
 @pytest.mark.asyncio
+async def test_update_task_tool(client):
+    create_resp = await client.post("/api/tasks", json={"title": "수정대상", "priority": "low"})
+    task_id = create_resp.json()["id"]
+
+    tools = get_agent_tools()
+    update_tool = tools[1]
+    assert update_tool.name == "update_task"
+
+    result = await update_tool.ainvoke({"task_id": task_id, "title": "수정됨", "priority": "high"})
+    assert "updated" in result.lower() or "status" in result.lower()
+    assert "수정됨" in result
+
+
+@pytest.mark.asyncio
 async def test_tools_return_list(client):
     tools = get_agent_tools()
     assert len(tools) == 5
