@@ -114,14 +114,26 @@ def build_graph(checkpointer=None) -> "CompiledGraph":
 
     workflow = StateGraph(AgentState)
 
-    workflow.add_node("classify_intent", lambda s: classify_intent(s, llm))
-    workflow.add_node("extract_info", lambda s: _extract_with_llm(s, llm))
+    async def _classify_node(s):
+        return await classify_intent(s, llm)
+
+    async def _extract_node(s):
+        return await _extract_with_llm(s, llm)
+
+    workflow.add_node("classify_intent", _classify_node)
+    workflow.add_node("extract_info", _extract_node)
     workflow.add_node("check_missing", lambda s: _extract_missing_fields(s))
     workflow.add_node("ask_missing_info", ask_missing_info)
     workflow.add_node("confirm", confirm)
     workflow.add_node("parse_confirmation", parse_confirmation)
-    workflow.add_node("execute", lambda s: execute_action(s, tools_by_name))
-    workflow.add_node("list_action", lambda s: _do_list(s, tools_by_name))
+    async def _execute_node(s):
+        return await execute_action(s, tools_by_name)
+
+    async def _list_node(s):
+        return await _do_list(s, tools_by_name)
+
+    workflow.add_node("execute", _execute_node)
+    workflow.add_node("list_action", _list_node)
     workflow.add_node("respond", respond)
     workflow.add_node("cancel", lambda s: {
         "messages": [AIMessage(content="작업이 취소되었습니다.")],
