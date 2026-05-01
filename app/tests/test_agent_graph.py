@@ -99,7 +99,12 @@ async def test_create_flow_complete():
 
 @pytest.mark.asyncio
 async def test_list_flow():
-    with patch("langchain_openai.ChatOpenAI") as mock_llm_class:
+    mock_list_tool = MagicMock()
+    mock_list_tool.name = "list_tasks"
+    mock_list_tool.ainvoke = AsyncMock(return_value='{"status":"listed","count":0,"tasks":[]}')
+
+    with patch("langchain_openai.ChatOpenAI") as mock_llm_class, \
+         patch("app.agent.graph.get_agent_tools", return_value=[mock_list_tool]):
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="list"))
         mock_llm_class.return_value = mock_llm

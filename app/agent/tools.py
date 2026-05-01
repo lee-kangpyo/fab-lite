@@ -32,8 +32,12 @@ async def create_task(title: str, description: str = "", priority: str = "medium
 @tool
 async def update_task(task_id: str, title: str | None = None, description: str | None = None, priority: str | None = None, status: str | None = None) -> str:
     """기존 태스크를 수정합니다. task_id는 필수, 나머지는 선택적으로 변경."""
+    try:
+        task_uuid = uuid.UUID(task_id)
+    except (ValueError, AttributeError):
+        return json.dumps({"status": "error", "message": "Invalid task ID format"}, ensure_ascii=False)
     async with async_session() as session:
-        task = await session.get(Task, uuid.UUID(task_id))
+        task = await session.get(Task, task_uuid)
         if not task:
             return json.dumps({"status": "error", "message": "Task not found"}, ensure_ascii=False)
         if title is not None:
@@ -74,8 +78,12 @@ async def list_tasks(status: str | None = None, priority: str | None = None) -> 
 @tool
 async def get_task(task_id: str) -> str:
     """단일 태스크를 조회합니다. task_id는 필수."""
+    try:
+        task_uuid = uuid.UUID(task_id)
+    except (ValueError, AttributeError):
+        return json.dumps({"status": "error", "message": "Invalid task ID format"}, ensure_ascii=False)
     async with async_session() as session:
-        task = await session.get(Task, uuid.UUID(task_id))
+        task = await session.get(Task, task_uuid)
         if not task:
             return json.dumps({"status": "error", "message": "Task not found"}, ensure_ascii=False)
         return json.dumps({
@@ -92,8 +100,12 @@ async def get_task(task_id: str) -> str:
 @tool
 async def delete_task(task_id: str) -> str:
     """태스크를 삭제합니다. task_id는 필수."""
+    try:
+        task_uuid = uuid.UUID(task_id)
+    except (ValueError, AttributeError):
+        return json.dumps({"status": "error", "message": "Invalid task ID format"}, ensure_ascii=False)
     async with async_session() as session:
-        task = await session.get(Task, uuid.UUID(task_id))
+        task = await session.get(Task, task_uuid)
         if not task:
             return json.dumps({"status": "error", "message": "Task not found"}, ensure_ascii=False)
         await session.delete(task)
