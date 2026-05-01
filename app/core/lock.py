@@ -72,3 +72,48 @@ class DistributedLock:
                 except Exception:
                     continue
         self._acquired_clients = []
+
+
+@asynccontextmanager
+async def PGAdvisoryLock(session: AsyncSession, key: int):
+    result = await session.execute(
+        text("SELECT pg_try_advisory_lock(:key)"), {"key": key}
+    )
+    acquired = result.scalar()
+    if not acquired:
+        raise RuntimeError(f"Failed to acquire advisory lock for key {key}")
+    try:
+        yield
+    finally:
+        await session.execute(
+            text("SELECT pg_advisory_unlock(:key)"), {"key": key}
+        )
+
+
+async def atomic_state_transition(redis_client, job_name: str, from_state: str, to_state: str, ttl: int = 300) -> bool:
+    """Redis SET NX 기반 원자적 상태 전이 (L3).
+
+    키가 존재하지 않을 때만 to_state로 설정.
+    성공 시 True, 이미 실행 중이면 False.
+    """
+    key = f"job:{job_name}:state"
+    current = await redis_client.get(key)
+    if current is not None:
+        val = current.decode() if isinstance(current, bytes) else current
+        if val != from_state:
+            return False
+    result = await redis_client.set(key, to_state, nx=True, ex=ttl)
+    return result is not None
+
+
+async def with_retry_backoff(coro_func, max_wait: float = 5.0) -> bool:
+    delay = 0.1
+    elapsed = 0.0
+    while elapsed < max_wait:
+        result = await coro_func()
+        if result:
+            return True
+        await asyncio.sleep(delay)
+        elapsed += delay
+        delay = min(delay * 2, 1.0)
+    return False
