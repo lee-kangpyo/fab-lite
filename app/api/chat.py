@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -17,21 +17,19 @@ from app.schemas.chat import (
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
-_sessions: dict[str, MemorySaver] = {}
+_sessions: dict[str, any] = {}
+_pool_saver = None
 
 
 @router.post("/sessions", response_model=SessionCreateResponse, status_code=201)
-async def create_session():
+async def create_session(request: Request):
     session_id = str(uuid.uuid4())
     if os.environ.get("TESTING"):
         _sessions[session_id] = MemorySaver()
     else:
-        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-
-        from app.config import settings
-
-        _sessions[session_id] = AsyncPostgresSaver.from_conn_string(settings.database_url)
-        await _sessions[session_id].setup()
+        # FastAPI app.state에 저장된 공용 세이버 사용
+        _sessions[session_id] = request.app.state.saver
+        
     return SessionCreateResponse(session_id=session_id)
 
 

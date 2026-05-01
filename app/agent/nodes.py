@@ -16,25 +16,30 @@ async def classify_intent(state: AgentState, llm) -> AgentState:
             last_human = msg.content
             break
 
-    system_prompt = """당신은 태스크 관리 에이전트의 의도 분류기입니다.
-사용자의 마지막 메시지를 분석하여 다 중 하나의 의도를 반환하세요:
-- create: 새 태스크를 생성하려는 의도
-- update: 기존 태스크를 수정하려는 의도
-- list: 태스크 목록을 조회하려는 의도
-- delete: 태스크를 삭제하려는 의도
-- unknown: 그 외
+    system_prompt = """사용자의 메시지를 분석하여 의도를 분류하세요. 
+다음 키워드 중 하나만 선택하여 응답하세요:
+- create: 태스크 생성/추가/등록
+- update: 태스크 수정/변경/업데이트
+- list: 태스크 목록 조회/리스트 확인
+- delete: 태스크 삭제/제거
+- unknown: 기타 대화
 
-응답은 반드시 의도 단어 하나만 반환하세요. 설명이나 추가 텍스트 없이."""
+응답은 반드시 'create', 'update', 'list', 'delete', 'unknown' 중 하나의 단어여야 합니다."""
 
     response = await llm.ainvoke([
         SystemMessage(content=system_prompt),
         HumanMessage(content=last_human or ""),
     ])
-    intent = response.content.strip().lower()
-
-    valid_intents = {"create", "update", "list", "delete", "unknown"}
-    if intent not in valid_intents:
-        intent = "unknown"
+    
+    content = response.content.strip().lower()
+    
+    # 텍스트 내에서 키워드 검색 (유연한 파싱)
+    target_intents = ["create", "update", "list", "delete"]
+    intent = "unknown"
+    for candidate in target_intents:
+        if candidate in content:
+            intent = candidate
+            break
 
     return {"intent": intent}
 

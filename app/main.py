@@ -8,7 +8,15 @@ from app.api.chat import router as chat_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield
+    # 서버 시작 시 PostgreSQL 체크포인터 초기화
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    from app.config import settings
+    
+    async with AsyncPostgresSaver.from_conn_string(settings.checkpointer_url) as saver:
+        await saver.setup()
+        app.state.saver = saver
+        yield
+    # 서버 종료 시 연결이 자동으로 닫힘
 
 
 app = FastAPI(title="FabriX Lite", version="0.2.0", lifespan=lifespan)

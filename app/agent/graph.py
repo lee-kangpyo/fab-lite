@@ -53,23 +53,31 @@ async def _extract_with_llm(state: AgentState, llm) -> AgentState:
 
     intent = state.get("intent", "")
     if intent == "create":
-        prompt = f"""사용자 메시지에서 태스크 생성 정보를 추출하세요.
-        필드: title(필수), description(선택), priority(선택: low/medium/high/urgent), due_date(선택: ISO형식)
-        JSON만 반환하세요. 추출할 수 있는 필드는 빈 문자열로 두세요.
+        prompt = f"""사용자 메시지에서 태스크 정보를 추출하여 JSON으로 반환하세요.
+반드시 다음 필드명을 사용하세요:
+- title: 태스크 제목 (필수)
+- priority: low, medium, high, urgent 중 하나 (기본값: medium)
+- description: 상세 내용 (선택)
+- due_date: YYYY-MM-DD 형식 (선택)
 
-        사용자 메시지: {last_human}"""
+[예시]
+입력: "내일 아침 9시에 주간 보고서 작성해줘. 아주 급해."
+출력: {{"title": "주간 보고서 작성", "priority": "urgent", "due_date": "2024-05-02", "description": ""}}
+
+사용자 메시지: {last_human}
+출력:"""
     elif intent == "update":
-        prompt = f"""사용자 메시지에서 태스크 수정 정보를 추출하세요.
-        필드: task_id(필수), title(선택), description(선택), priority(선택), status(선택: todo/in_progress/done/cancelled)
-        JSON만 반환하세요.
+        prompt = f"""사용자 메시지에서 태스크 수정 정보를 JSON 형식으로 추출하세요.
+필드: task_id, title, description, priority, status
+추출할 수 없는 필드는 null로 설정하세요. 반드시 JSON만 응답하세요.
 
-        사용자 메시지: {last_human}"""
+사용자 메시지: {last_human}"""
     elif intent == "delete":
-        prompt = f"""사용자 메시지에서 태스크 ID를 추출하세요.
-        필드: task_id(필수)
-        JSON만 반환하세요.
+        prompt = f"""사용자 메시지에서 삭제할 태스크 ID를 추출하세요.
+필드: task_id
+반드시 JSON만 응답하세요.
 
-        사용자 메시지: {last_human}"""
+사용자 메시지: {last_human}"""
     else:
         return {"task_data": {}, "missing_fields": []}
 
@@ -79,10 +87,14 @@ async def _extract_with_llm(state: AgentState, llm) -> AgentState:
     ])
 
     import json
+    import re
     content = response.content.strip()
-    if content.startswith("```"):
-        content = content.split("\n", 1)[1] if "\n" in content else content[3:]
-        content = content.rsplit("```", 1)[0] if "```" in content else content
+    
+    # JSON 블록 추출 ({ ... })
+    json_match = re.search(r"({.*})", content, re.DOTALL)
+    if json_match:
+        content = json_match.group(1)
+    
     try:
         data = json.loads(content)
     except json.JSONDecodeError:

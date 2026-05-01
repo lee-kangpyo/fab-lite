@@ -35,6 +35,14 @@ class Settings(BaseSettings):
         )
 
     @property
+    def checkpointer_url(self) -> str:
+        # LangGraph PostgresSaver는 psycopg 드라이버를 기대함
+        return (
+            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
     def redis_url_list(self) -> list[str]:
         return [url.strip() for url in self.redis_urls.split(",")]
 
