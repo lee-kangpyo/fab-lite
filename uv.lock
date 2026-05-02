@@ -286,6 +286,11 @@ dev = [
     { name = "pytest-asyncio" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "fakeredis" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20.0" },
@@ -312,6 +317,9 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.6" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "fakeredis", specifier = ">=2.35.1" }]
 
 [[package]]
 name = "fakeredis"
