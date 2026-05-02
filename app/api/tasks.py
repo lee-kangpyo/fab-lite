@@ -74,3 +74,13 @@ async def change_status(task_id: uuid.UUID, body: TaskStatusUpdate, db: AsyncSes
     await db.commit()
     await db.refresh(task)
     return task
+
+
+@router.post("/test-scheduler-run")
+async def test_scheduler_run():
+    """스케줄러의 긴급 요약 작업을 수동으로 즉시 실행합니다. (테스트용)"""
+    from app.main import _scheduler_runner
+    if _scheduler_runner:
+        await _scheduler_runner.summarize_urgent_tasks()
+        return {"message": "수동 요약 작업이 시작되었습니다. Redis에서 'scheduler:urgent_summary:last' 키를 확인하세요!"}
+    return {"error": "스케줄러가 준비되지 않았습니다."}

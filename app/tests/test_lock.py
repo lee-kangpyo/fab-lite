@@ -7,52 +7,52 @@ from app.core.lock import advisory_lock_key, DistributedLock, PGAdvisoryLock, at
 
 
 @pytest.mark.asyncio
-async def test_advisory_lock_key_deterministic():
+async def test_어드바이저리_락_키_결정론적_생성():
     key1 = advisory_lock_key(0x01, "task", 42)
     key2 = advisory_lock_key(0x01, "task", 42)
     assert key1 == key2
 
 
 @pytest.mark.asyncio
-async def test_advisory_lock_key_different_namespace():
+async def test_어드바이저리_락_키_네임스페이스_차이():
     key1 = advisory_lock_key(0x01, "task", 42)
     key2 = advisory_lock_key(0x02, "task", 42)
     assert key1 != key2
 
 
 @pytest.mark.asyncio
-async def test_advisory_lock_key_different_entity():
+async def test_어드바이저리_락_키_엔티티_차이():
     key1 = advisory_lock_key(0x01, "task", 42)
     key2 = advisory_lock_key(0x01, "task", 99)
     assert key1 != key2
 
 
 @pytest.mark.asyncio
-async def test_advisory_lock_key_different_type():
+async def test_어드바이저리_락_키_타입_차이():
     key1 = advisory_lock_key(0x01, "task", 42)
     key2 = advisory_lock_key(0x01, "schedule", 42)
     assert key1 != key2
 
 
 @pytest.mark.asyncio
-async def test_advisory_lock_key_is_positive_bigint():
+async def test_어드바이저리_락_키_양수_BigInt_여부():
     key = advisory_lock_key(0x01, "task", 42)
     assert key > 0
     assert key < 2**63
 
 
 @pytest.mark.asyncio
-async def test_distributed_lock_acquire_single_node():
+async def test_분산락_단일_노드_획득():
     redis = fakeredis.aioredis.FakeRedis()
     lock = DistributedLock([redis], "test-lock", ttl=5000)
     acquired = await lock.acquire()
     assert acquired is True
     await lock.release()
-    await redis.close()
+    await redis.aclose()
 
 
 @pytest.mark.asyncio
-async def test_distributed_lock_acquire_quorum():
+async def test_분산락_쿼럼_획득():
     r1 = fakeredis.aioredis.FakeRedis()
     r2 = fakeredis.aioredis.FakeRedis()
     r3 = fakeredis.aioredis.FakeRedis()
@@ -60,24 +60,24 @@ async def test_distributed_lock_acquire_quorum():
     acquired = await lock.acquire()
     assert acquired is True
     await lock.release()
-    await r1.close()
-    await r2.close()
-    await r3.close()
+    await r1.aclose()
+    await r2.aclose()
+    await r3.aclose()
 
 
 @pytest.mark.asyncio
-async def test_distributed_lock_prevent_double_acquire():
+async def test_분산락_중복_획득_방지():
     redis = fakeredis.aioredis.FakeRedis()
     lock1 = DistributedLock([redis], "test-lock", ttl=5000)
     lock2 = DistributedLock([redis], "test-lock", ttl=5000)
     assert await lock1.acquire() is True
     assert await lock2.acquire() is False
     await lock1.release()
-    await redis.close()
+    await redis.aclose()
 
 
 @pytest.mark.asyncio
-async def test_distributed_lock_release_and_reacquire():
+async def test_분산락_해제_후_재획득():
     redis = fakeredis.aioredis.FakeRedis()
     lock1 = DistributedLock([redis], "test-lock", ttl=5000)
     lock2 = DistributedLock([redis], "test-lock", ttl=5000)
@@ -85,11 +85,11 @@ async def test_distributed_lock_release_and_reacquire():
     await lock1.release()
     assert await lock2.acquire() is True
     await lock2.release()
-    await redis.close()
+    await redis.aclose()
 
 
 @pytest.mark.asyncio
-async def test_pg_advisory_lock_acquire_and_release():
+async def test_PG_어드바이저리_락_획득_및_해제():
     mock_session = AsyncMock()
     scalar_result = MagicMock()
     scalar_result.scalar.return_value = True
@@ -102,7 +102,7 @@ async def test_pg_advisory_lock_acquire_and_release():
 
 
 @pytest.mark.asyncio
-async def test_pg_advisory_lock_acquire_fails():
+async def test_PG_어드바이저리_락_획득_실패():
     mock_session = AsyncMock()
     scalar_result = MagicMock()
     scalar_result.scalar.return_value = False
@@ -114,7 +114,7 @@ async def test_pg_advisory_lock_acquire_fails():
 
 
 @pytest.mark.asyncio
-async def test_pg_advisory_lock_releases_on_exception():
+async def test_PG_어드바이저리_락_예외_발생_시_자동_해제():
     mock_session = AsyncMock()
     scalar_result = MagicMock()
     scalar_result.scalar.return_value = True
@@ -128,26 +128,26 @@ async def test_pg_advisory_lock_releases_on_exception():
 
 
 @pytest.mark.asyncio
-async def test_atomic_state_transition_success():
+async def test_원자적_상태_전이_성공():
     redis = fakeredis.aioredis.FakeRedis()
     result = await atomic_state_transition(redis, "summarize", "READY", "RUNNING", ttl=300)
     assert result is True
     state = await redis.get("job:summarize:state")
     assert state == b"RUNNING"
-    await redis.close()
+    await redis.aclose()
 
 
 @pytest.mark.asyncio
-async def test_atomic_state_transition_already_running():
+async def test_원자적_상태_전이_이미_실행_중():
     redis = fakeredis.aioredis.FakeRedis()
     await redis.set("job:summarize:state", "RUNNING")
     result = await atomic_state_transition(redis, "summarize", "READY", "RUNNING", ttl=300)
     assert result is False
-    await redis.close()
+    await redis.aclose()
 
 
 @pytest.mark.asyncio
-async def test_with_retry_backoff_success_first_try():
+async def test_재시도_백오프_첫_시도_성공():
     call_count = 0
 
     async def succeeds():
@@ -161,7 +161,7 @@ async def test_with_retry_backoff_success_first_try():
 
 
 @pytest.mark.asyncio
-async def test_with_retry_backoff_success_after_retries():
+async def test_재시도_백오프_여러_번_시도_후_성공():
     call_count = 0
 
     async def succeeds_on_third():
@@ -175,7 +175,7 @@ async def test_with_retry_backoff_success_after_retries():
 
 
 @pytest.mark.asyncio
-async def test_with_retry_backoff_timeout():
+async def test_재시도_백오프_타임아웃_실패():
     async def never_succeeds():
         return False
 

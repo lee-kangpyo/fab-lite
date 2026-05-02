@@ -74,7 +74,7 @@ async def _scheduled_summarize_urgent_tasks(redis_url: str):
                 pass
         await redis.delete("scheduler:urgent_summary:state")
         await lock.release()
-    await redis.close()
+    await redis.aclose()
 
 
 async def _heartbeat(redis_client, key: str, interval: float = 5.0):
@@ -134,7 +134,7 @@ class SchedulerRunner:
         if self._scheduler:
             self._scheduler.shutdown(wait=False)
         if self._redis:
-            await self._redis.close()
+            await self._redis.aclose()
 
     async def summarize_urgent_tasks(self):
         lock = DistributedLock([self._redis], "scheduler:urgent_summary")

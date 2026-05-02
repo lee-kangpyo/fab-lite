@@ -12,14 +12,14 @@ from app.config import settings
 
 
 @pytest.mark.asyncio
-async def test_scheduler_runner_init():
+async def test_스케줄러_러너_초기화():
     runner = SchedulerRunner("redis://localhost:6379/0")
     assert runner._redis_url == "redis://localhost:6379/0"
     assert runner._scheduler is None
 
 
 @pytest.mark.asyncio
-async def test_scheduler_runner_start_stop():
+async def test_스케줄러_러너_시작_및_종료():
     runner = SchedulerRunner("redis://localhost:6379/0")
     mock_async_redis = AsyncMock()
     mock_async_redis.close = AsyncMock()
@@ -39,7 +39,7 @@ async def test_scheduler_runner_start_stop():
 
 
 @pytest.mark.asyncio
-async def test_summarize_urgent_tasks(client):
+async def test_긴급_태스크_요약_생성(client):
     await client.post("/api/tasks", json={"title": "긴급1", "priority": "urgent"})
     await client.post("/api/tasks", json={"title": "긴급2", "priority": "urgent"})
     await client.post("/api/tasks", json={"title": "보통", "priority": "medium"})
@@ -63,11 +63,11 @@ async def test_summarize_urgent_tasks(client):
         assert "긴급2" in summary
         assert "보통" not in summary
 
-    await mock_redis.close()
+    await mock_redis.aclose()
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_updates_redis():
+async def test_하트비트_레디스_갱신():
     mock_redis = fakeredis.aioredis.FakeRedis()
     runner = SchedulerRunner("redis://localhost:6379/0")
     runner._redis = mock_redis
@@ -82,11 +82,11 @@ async def test_heartbeat_updates_redis():
 
     val = await mock_redis.get("test:heartbeat")
     assert val == b"alive"
-    await mock_redis.close()
+    await mock_redis.aclose()
 
 
 @pytest.mark.asyncio
-async def test_get_last_summary():
+async def test_최근_요약_결과_조회():
     mock_redis = fakeredis.aioredis.FakeRedis()
     await mock_redis.set("scheduler:urgent_summary:last", "테스트 요약")
 
@@ -95,22 +95,22 @@ async def test_get_last_summary():
 
     summary = await runner.get_last_summary()
     assert summary == "테스트 요약"
-    await mock_redis.close()
+    await mock_redis.aclose()
 
 
 @pytest.mark.asyncio
-async def test_get_last_summary_none():
+async def test_최근_요약_결과_없음():
     mock_redis = fakeredis.aioredis.FakeRedis()
     runner = SchedulerRunner("redis://localhost:6379/0")
     runner._redis = mock_redis
 
     summary = await runner.get_last_summary()
     assert summary is None
-    await mock_redis.close()
+    await mock_redis.aclose()
 
 
 @pytest.mark.asyncio
-async def test_scheduler_lifecycle_with_test_env(client):
+async def test_스케줄러_라이프사이클_테스트_환경(client):
     import os
     assert os.environ.get("TESTING") == "1"
 
