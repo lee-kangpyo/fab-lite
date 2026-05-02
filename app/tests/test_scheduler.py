@@ -8,6 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import fakeredis.aioredis
 
 from app.scheduler.runner import SchedulerRunner
+from app.config import settings
 
 
 @pytest.mark.asyncio
@@ -108,3 +109,13 @@ async def test_get_last_summary_none():
     summary = await runner.get_last_summary()
     assert summary is None
     await mock_redis.close()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_lifecycle_with_test_env(client):
+    import os
+    assert os.environ.get("TESTING") == "1"
+
+    from app.main import app
+    resp = await client.get("/health")
+    assert resp.status_code == 200
