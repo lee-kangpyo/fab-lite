@@ -94,7 +94,12 @@ async def send_message(session_id: str, body: ChatMessageRequest, request: Reque
                 )
             except Exception as e:
                 span.set_attribute("error", str(e))
+                await redis.aclose()
                 raise
+
+            await redis.aclose()
+            await token_counter.await_pending()
+
     else:
         try:
             result = await graph.ainvoke(
@@ -102,9 +107,9 @@ async def send_message(session_id: str, body: ChatMessageRequest, request: Reque
                 config,
             )
         except Exception as e:
+            await redis.aclose()
             raise HTTPException(status_code=500, detail=str(e))
 
-    if not os.environ.get("TESTING"):
         await redis.aclose()
 
     last_ai_message = None
