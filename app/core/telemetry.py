@@ -7,7 +7,7 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
 
 
 def setup_telemetry(service_name: str) -> TracerProvider | None:
@@ -21,8 +21,20 @@ def setup_telemetry(service_name: str) -> TracerProvider | None:
     from app.config import settings
 
     if settings.otel_enabled:
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+        headers = {}
+        if settings.otel_exporter_otlp_headers:
+            for pair in settings.otel_exporter_otlp_headers.split(","):
+                key, _, value = pair.partition("=")
+                key = key.strip()
+                if not key:
+                    continue
+                headers[key] = value.strip()
+
         exporter = OTLPSpanExporter(
             endpoint=settings.otel_exporter_otlp_endpoint,
+            headers=headers,
             insecure=True,
         )
         provider.add_span_processor(BatchSpanProcessor(exporter))
@@ -42,11 +54,24 @@ def get_correlation_id(request) -> str:
     return str(uuid.uuid4())
 
 
-def get_langfuse_callback_handler():
+def get_langfuse_callback_handler(session_id: str = None, trace_id: str = None):
+    import os
     from langfuse.langchain import CallbackHandler
     from app.config import settings
 
-    return CallbackHandler(
+    # SDK 내부 클라이언트가 참조할 수 있도록 환경변수 세팅
+    os.environ["LANGFUSE_PUBLIC_KEY"] = settings.langfuse_public_key
+    os.environ["LANGFUSE_SECRET_KEY"] = settings.langfuse_secret_key
+    os.environ["LANGFUSE_HOST"] = settings.langfuse_host
+
+    return CallbackHandler()
+
+
+def get_langfuse_client():
+    from langfuse import Langfuse
+    from app.config import settings
+
+    return Langfuse(
         public_key=settings.langfuse_public_key,
         secret_key=settings.langfuse_secret_key,
         host=settings.langfuse_host,
@@ -58,15 +83,4 @@ def create_langfuse_trace(langfuse_client, correlation_id: str, session_id: str)
         name="chat_request",
         id=correlation_id,
         metadata={"session_id": session_id},
-    )
-
-
-def get_langfuse_client():
-    from langfuse import Langfuse
-    from app.config import settings
-
-    return Langfuse(
-        public_key=settings.langfuse_public_key,
-        secret_key=settings.langfuse_secret_key,
-        host=settings.langfuse_host,
     )
