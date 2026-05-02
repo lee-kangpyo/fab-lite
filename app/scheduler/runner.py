@@ -41,14 +41,12 @@ class SchedulerRunner:
         self._redis = async_from_url(self._redis_url)
 
         parsed = urlparse(self._redis_url)
-        sync_redis = SyncRedis(
+        job_store = RedisJobStore(
             host=parsed.hostname or "localhost",
             port=parsed.port or 6379,
-            db=int((parsed.path or "/0").lstrip("/")),
+            db=int((parsed.path or "/0").lstrip("/")) or 0,
             password=parsed.password,
         )
-
-        job_store = RedisJobStore(redis=sync_redis)
         self._scheduler = AsyncIOScheduler(
             jobstores={"default": job_store},
         )
