@@ -23,10 +23,8 @@ async def test_scheduler_runner_start_stop():
     runner = SchedulerRunner("redis://localhost:6379/0")
     mock_async_redis = AsyncMock()
     mock_async_redis.close = AsyncMock()
-    mock_sync_redis = MagicMock()
 
     with patch("app.scheduler.runner.async_from_url", return_value=mock_async_redis), \
-         patch("app.scheduler.runner.SyncRedis", return_value=mock_sync_redis), \
          patch("app.scheduler.runner.RedisJobStore"):
         runner._redis = mock_async_redis
         scheduler = AsyncIOScheduler()
