@@ -24,7 +24,7 @@ async def check_token_budget(redis: Redis, session_id: str, limit: int) -> bool:
 class TokenCountingCallback:
     """LangChain 콜백으로 LLM 응답에서 토큰 수를 추출해 Redis에 적재."""
 
-    def __init__(self, redis: Redis, session_id: str):
+    def __init__(self, redis: Redis, session_id: str) -> None:
         self._redis = redis
         self._session_id = session_id
         self._pending_tasks: list[asyncio.Task[None]] = []
@@ -43,9 +43,12 @@ class TokenCountingCallback:
                 )
                 self._pending_tasks.append(task)
             except RuntimeError:
-                asyncio.run(
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(
                     record_token_usage(self._redis, self._session_id, total)
                 )
+                loop.close()
 
     async def await_pending(self) -> None:
         for task in self._pending_tasks:
