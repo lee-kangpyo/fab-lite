@@ -22,6 +22,9 @@ class Settings(BaseSettings):
 
     token_limit_per_session: int = 100000
 
+    otel_exporter_otlp_endpoint: str = "http://localhost:54317"
+    otel_enabled: bool = True
+
     lock_namespace_task: int = 1
     lock_namespace_schedule: int = 2
 
