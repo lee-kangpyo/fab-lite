@@ -21,7 +21,7 @@ def setup_telemetry(service_name: str) -> TracerProvider | None:
     from app.config import settings
 
     if settings.otel_enabled:
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
         headers = {}
         if settings.otel_exporter_otlp_headers:
@@ -35,7 +35,6 @@ def setup_telemetry(service_name: str) -> TracerProvider | None:
         exporter = OTLPSpanExporter(
             endpoint=settings.otel_exporter_otlp_endpoint,
             headers=headers,
-            insecure=True,
         )
         provider.add_span_processor(BatchSpanProcessor(exporter))
 

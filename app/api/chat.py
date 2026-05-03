@@ -79,13 +79,6 @@ async def send_message(session_id: str, body: ChatMessageRequest, request: Reque
 
         correlation_id = get_correlation_id(request)
 
-        langfuse_handler = get_langfuse_callback_handler(
-            session_id=session_id, trace_id=correlation_id
-        )
-        token_counter = TokenCountingCallback(redis, session_id)
-
-        config["callbacks"] = [langfuse_handler, token_counter]
-
         from opentelemetry import trace
         from langfuse import propagate_attributes
 
@@ -93,6 +86,20 @@ async def send_message(session_id: str, body: ChatMessageRequest, request: Reque
         with tracer.start_as_current_span("chat.send_message") as span:
             span.set_attribute("session_id", session_id)
             span.set_attribute("correlation_id", correlation_id)
+
+            # 1. OTel이 방금 생성한 고유 명찰(Trace ID)을 가져옵니다.
+            otel_trace_id = f"{span.get_span_context().trace_id:032x}"
+
+            # 2. 이 명찰을 Langfuse SDK에게도 똑같이 쓰라고 강제합니다!
+            langfuse_handler = get_langfuse_callback_handler(
+                session_id=session_id, trace_id=otel_trace_id
+            )
+            token_counter = TokenCountingCallback(
+                redis, session_id, reset_period=settings.token_limit_reset_period
+            )
+
+            config["callbacks"] = [langfuse_handler, token_counter]
+
 
             try:
                 # 랭퓨즈 세션 추적 활성화

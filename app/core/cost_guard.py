@@ -5,8 +5,11 @@ import asyncio
 from redis.asyncio import Redis
 
 
-async def record_token_usage(redis: Redis, session_id: str, tokens: int) -> None:
-    await redis.incrby(f"token_usage:{session_id}", tokens)
+async def record_token_usage(redis: Redis, session_id: str, tokens: int, reset_period: int = 86400) -> None:
+    key = f"token_usage:{session_id}"
+    await redis.incrby(key, tokens)
+    # 처음 생성된 키일 경우에만 TTL 설정 (nx=True)
+    await redis.expire(key, reset_period, nx=True)
 
 
 async def get_session_token_usage(redis: Redis, session_id: str) -> int:
@@ -29,10 +32,11 @@ class TokenCountingCallback(BaseCallbackHandler):
     # 최신 langchain-core 호환성을 위해 추가
     run_inline: bool = True
 
-    def __init__(self, redis: Redis, session_id: str) -> None:
+    def __init__(self, redis: Redis, session_id: str, reset_period: int = 86400) -> None:
         super().__init__()
         self._redis = redis
         self._session_id = session_id
+        self._reset_period = reset_period
         self._pending_tasks: list[asyncio.Task[None]] = []
 
     def on_llm_end(self, response: object, **kwargs: object) -> None:
@@ -45,14 +49,14 @@ class TokenCountingCallback(BaseCallbackHandler):
             try:
                 loop = asyncio.get_running_loop()
                 task = loop.create_task(
-                    record_token_usage(self._redis, self._session_id, total)
+                    record_token_usage(self._redis, self._session_id, total, self._reset_period)
                 )
                 self._pending_tasks.append(task)
             except RuntimeError:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 loop.run_until_complete(
-                    record_token_usage(self._redis, self._session_id, total)
+                    record_token_usage(self._redis, self._session_id, total, self._reset_period)
                 )
                 loop.close()
 
