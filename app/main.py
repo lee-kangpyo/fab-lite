@@ -29,7 +29,17 @@ async def lifespan(app: FastAPI):
         _scheduler_runner = SchedulerRunner(settings.redis_url_list[0])
         await _scheduler_runner.start()
 
-    yield
+    # [추가] 랭그래프 체크포인터(Postgres) 초기화
+    if not os.environ.get("TESTING"):
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+        
+        async with AsyncPostgresSaver.from_conn_string(settings.checkpointer_url) as saver:
+            # 테이블이 없으면 자동 생성
+            await saver.setup()
+            app.state.saver = saver
+            yield
+    else:
+        yield
 
     if _scheduler_runner:
         await _scheduler_runner.stop()

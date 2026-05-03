@@ -21,15 +21,21 @@ async def check_token_budget(redis: Redis, session_id: str, limit: int) -> bool:
     return usage <= limit
 
 
-class TokenCountingCallback:
+from langchain_core.callbacks import BaseCallbackHandler
+
+class TokenCountingCallback(BaseCallbackHandler):
     """LangChain 콜백으로 LLM 응답에서 토큰 수를 추출해 Redis에 적재."""
+    
+    # 최신 langchain-core 호환성을 위해 추가
+    run_inline: bool = True
 
     def __init__(self, redis: Redis, session_id: str) -> None:
+        super().__init__()
         self._redis = redis
         self._session_id = session_id
         self._pending_tasks: list[asyncio.Task[None]] = []
 
-    def on_llm_end(self, response: object) -> None:
+    def on_llm_end(self, response: object, **kwargs: object) -> None:
         token_usage = getattr(response, "llm_output", None)
         if not token_usage:
             return

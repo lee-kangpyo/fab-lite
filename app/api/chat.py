@@ -31,11 +31,21 @@ def _get_redis_for_cost_guard():
 
 @router.post("/sessions", response_model=SessionCreateResponse, status_code=201)
 async def create_session(request: Request):
+    print(f"\n[Debug] Creating session...")
     session_id = str(uuid.uuid4())
-    if os.environ.get("TESTING"):
-        _sessions[session_id] = MemorySaver()
-    else:
-        _sessions[session_id] = request.app.state.saver
+    
+    try:
+        if os.environ.get("TESTING"):
+            print("[Debug] Using MemorySaver (Testing mode)")
+            _sessions[session_id] = MemorySaver()
+        else:
+            print(f"[Debug] Using app.state.saver: {getattr(request.app.state, 'saver', 'MISSING')}")
+            _sessions[session_id] = request.app.state.saver
+        
+        print(f"[Debug] Session created: {session_id}")
+    except Exception as e:
+        print(f"[Debug] Error in create_session: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
     return SessionCreateResponse(session_id=session_id)
 
@@ -64,41 +74,48 @@ async def send_message(session_id: str, body: ChatMessageRequest, request: Reque
         from app.core.telemetry import (
             get_correlation_id,
             get_langfuse_callback_handler,
-            get_langfuse_client,
-            create_langfuse_trace,
         )
         from app.core.cost_guard import TokenCountingCallback
 
         correlation_id = get_correlation_id(request)
 
-        langfuse_client = get_langfuse_client()
-        langfuse_trace = create_langfuse_trace(
-            langfuse_client, correlation_id, session_id
+        langfuse_handler = get_langfuse_callback_handler(
+            session_id=session_id, trace_id=correlation_id
         )
-
-        langfuse_handler = get_langfuse_callback_handler()
         token_counter = TokenCountingCallback(redis, session_id)
 
         config["callbacks"] = [langfuse_handler, token_counter]
 
         from opentelemetry import trace
+        from langfuse import propagate_attributes
+
         tracer = trace.get_tracer("fabrix-lite")
         with tracer.start_as_current_span("chat.send_message") as span:
             span.set_attribute("session_id", session_id)
             span.set_attribute("correlation_id", correlation_id)
 
             try:
-                result = await graph.ainvoke(
-                    {"messages": [HumanMessage(content=body.message)]},
-                    config,
-                )
+                # 랭퓨즈 세션 추적 활성화
+                with propagate_attributes(session_id=session_id):
+                    result = await graph.ainvoke(
+                        {"messages": [HumanMessage(content=body.message)]},
+                        config,
+                    )
             except Exception as e:
                 span.set_attribute("error", str(e))
                 await redis.aclose()
+                # 에러가 났을 때도 보내기 위해 flush
+                from app.core.telemetry import get_langfuse_client
+                get_langfuse_client().flush()
                 raise
 
             await redis.aclose()
             await token_counter.await_pending()
+            
+            # 테스트 스크립트가 너무 빨리 끝나는 것을 막고 데이터를 전송하도록 flush
+            from app.core.telemetry import get_langfuse_client
+            get_langfuse_client().flush()
+
 
     else:
         try:
