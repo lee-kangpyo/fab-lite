@@ -68,7 +68,11 @@ async def send_message(session_id: str, body: ChatMessageRequest, request: Reque
     checkpointer = _sessions[session_id]
     graph = build_graph(checkpointer=checkpointer)
 
-    config: dict = {"configurable": {"thread_id": session_id}}
+    # 1. 텔레메트리 및 콜백 준비 (테스트 모드가 아닐 때만)
+    langfuse_handler = None
+    token_counter = None
+    otel_trace_id = None
+    correlation_id = None
 
     if not os.environ.get("TESTING"):
         from app.core.telemetry import (
@@ -76,66 +80,59 @@ async def send_message(session_id: str, body: ChatMessageRequest, request: Reque
             get_langfuse_callback_handler,
         )
         from app.core.cost_guard import TokenCountingCallback
+        from opentelemetry import trace
 
         correlation_id = get_correlation_id(request)
-
-        from opentelemetry import trace
-        from langfuse import propagate_attributes
-
         tracer = trace.get_tracer("fabrix-lite")
-        with tracer.start_as_current_span("chat.send_message") as span:
-            span.set_attribute("session_id", session_id)
-            span.set_attribute("correlation_id", correlation_id)
+        
+        # OTel 스팬 시작 및 ID 추출
+        span = trace.get_current_span()
+        if not span.get_span_context().is_valid:
+            # 새로운 스팬 시작 (이미 진행 중인 게 없다면)
+            span = tracer.start_span("chat.send_message")
+        
+        otel_trace_id = f"{span.get_span_context().trace_id:032x}"
+        span.set_attribute("session_id", session_id)
+        span.set_attribute("correlation_id", correlation_id)
 
-            # 1. OTel이 방금 생성한 고유 명찰(Trace ID)을 가져옵니다.
-            otel_trace_id = f"{span.get_span_context().trace_id:032x}"
+        langfuse_handler = get_langfuse_callback_handler(
+            session_id=session_id, trace_id=otel_trace_id
+        )
+        token_counter = TokenCountingCallback(
+            redis, session_id, reset_period=settings.token_limit_reset_period
+        )
 
-            # 2. 이 명찰을 Langfuse SDK에게도 똑같이 쓰라고 강제합니다!
-            langfuse_handler = get_langfuse_callback_handler(
-                session_id=session_id, trace_id=otel_trace_id
-            )
-            token_counter = TokenCountingCallback(
-                redis, session_id, reset_period=settings.token_limit_reset_period
-            )
+    # 2. 그래프 실행 설정 (준비된 ID들 주입)
+    config: dict = {
+        "configurable": {"thread_id": session_id},
+        "metadata": {
+            "langfuse_session_id": session_id,
+            "langfuse_trace_id": otel_trace_id,
+            "correlation_id": correlation_id,
+        },
+        "callbacks": [h for h in [langfuse_handler, token_counter] if h is not None]
+    }
 
-            config["callbacks"] = [langfuse_handler, token_counter]
-
-
-            try:
-                # 랭퓨즈 세션 추적 활성화
-                with propagate_attributes(session_id=session_id):
-                    result = await graph.ainvoke(
-                        {"messages": [HumanMessage(content=body.message)]},
-                        config,
-                    )
-            except Exception as e:
-                span.set_attribute("error", str(e))
-                await redis.aclose()
-                # 에러가 났을 때도 보내기 위해 flush
-                from app.core.telemetry import get_langfuse_client
-                get_langfuse_client().flush()
-                raise
-
-            await redis.aclose()
-            await token_counter.await_pending()
-            
-            # 테스트 스크립트가 너무 빨리 끝나는 것을 막고 데이터를 전송하도록 flush
-            from app.core.telemetry import get_langfuse_client
-            get_langfuse_client().flush()
-
-
-    else:
-        try:
+    try:
+        from langfuse import propagate_attributes
+        # 랭퓨즈 세션 추적 활성화
+        with propagate_attributes(session_id=session_id):
             result = await graph.ainvoke(
                 {"messages": [HumanMessage(content=body.message)]},
                 config,
             )
-        except Exception as e:
-            await redis.aclose()
-            raise HTTPException(status_code=500, detail=str(e))
-
+    except Exception as e:
+        if not os.environ.get("TESTING"):
+            from app.core.telemetry import get_langfuse_client
+            get_langfuse_client().flush()
+        await redis.aclose()
+        raise
+    finally:
+        if token_counter:
+            await token_counter.await_pending()
         await redis.aclose()
 
+    # 마지막 AI 메시지 추출
     last_ai_message = None
     for msg in reversed(result.get("messages", [])):
         if isinstance(msg, AIMessage):
@@ -144,6 +141,7 @@ async def send_message(session_id: str, body: ChatMessageRequest, request: Reque
 
     return ChatMessageResponse(
         reply=last_ai_message or "응답을 생성하지 못했습니다.",
+        messages=result["messages"],
         intent=result.get("intent"),
         needs_confirmation=result.get("needs_confirmation", False),
     )

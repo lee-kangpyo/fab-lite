@@ -63,7 +63,14 @@ def get_langfuse_callback_handler(session_id: str = None, trace_id: str = None):
     os.environ["LANGFUSE_SECRET_KEY"] = settings.langfuse_secret_key
     os.environ["LANGFUSE_HOST"] = settings.langfuse_host
 
-    return CallbackHandler()
+    # v4.5.1 버전에서는 trace_context를 통해 ID를 전달해야 합니다.
+    return CallbackHandler(
+        trace_context={
+            "trace_id": trace_id,
+            "session_id": session_id
+        }
+    )
+
 
 
 def get_langfuse_client():
