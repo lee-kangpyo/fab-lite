@@ -15,3 +15,5 @@ class AgentState(TypedDict, total=False):
     needs_confirmation: bool
     confirmed: bool
     error: str | None
+    pending_candidates: list[dict[str, Any]]
+    pending_action: dict[str, Any]
