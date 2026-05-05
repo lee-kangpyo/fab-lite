@@ -67,16 +67,26 @@ async def _extract_with_llm(state: AgentState, llm) -> AgentState:
 사용자 메시지: {last_human}
 출력:"""
     elif intent == "update":
-        prompt = f"""사용자 메시지에서 태스크 수정 정보를 JSON 형식으로 추출하세요.
-필드: task_id, title, description, priority, status
-추출할 수 없는 필드는 null로 설정하세요. 반드시 JSON만 응답하세요.
+        prompt = f"""사용자 메시지에서 수정할 태스크 ID와 변경할 정보를 추출하세요.
+태스크 ID는 'cc8b3d7c-...' 와 같은 긴 UUID 형식일 수 있습니다. 이를 정확히 추출하세요.
 
+[필드]
+- task_id: 수정할 태스크의 고유 ID (필수)
+- title: 변경할 제목
+- description: 변경할 설명
+- priority: low, medium, high, urgent
+- status: todo, in_progress, done
+
+반드시 유효한 JSON만 응답하세요.
 사용자 메시지: {last_human}"""
     elif intent == "delete":
         prompt = f"""사용자 메시지에서 삭제할 태스크 ID를 추출하세요.
-필드: task_id
-반드시 JSON만 응답하세요.
+태스크 ID는 UUID 형식(예: 20c66abc-4089-...)일 수 있습니다.
 
+[필드]
+- task_id: 삭제할 태스크의 고유 ID (필수)
+
+반드시 유효한 JSON만 응답하세요.
 사용자 메시지: {last_human}"""
     else:
         return {"task_data": {}, "missing_fields": []}
@@ -137,7 +147,10 @@ def build_graph(checkpointer=None) -> "CompiledGraph":
     workflow.add_node("check_missing", lambda s: _extract_missing_fields(s))
     workflow.add_node("ask_missing_info", ask_missing_info)
     workflow.add_node("confirm", confirm)
-    workflow.add_node("parse_confirmation", parse_confirmation)
+
+    async def _parse_node(s):
+        return await parse_confirmation(s, llm)
+    workflow.add_node("parse_confirmation", _parse_node)
     async def _execute_node(s):
         return await execute_action(s, tools_by_name)
 
@@ -152,23 +165,40 @@ def build_graph(checkpointer=None) -> "CompiledGraph":
         "needs_confirmation": False,
     })
 
-    workflow.set_entry_point("classify_intent")
+    # [수정] 조건부 시작점: 컨펌 대기 중이면 바로 확인 노드로, 아니면 의도 분류로
+    def route_start(state: AgentState) -> str:
+        if state.get("needs_confirmation"):
+            return "parse_confirmation"
+        return "classify_intent"
+
+    workflow.set_conditional_entry_point(route_start, {
+        "parse_confirmation": "parse_confirmation",
+        "classify_intent": "classify_intent"
+    })
+
+    # 의도 분류 후 라우팅
     workflow.add_conditional_edges("classify_intent", route_intent, {
         "extract_info": "extract_info",
         "list_action": "list_action",
         "respond": "respond",
     })
+
     workflow.add_edge("extract_info", "check_missing")
     workflow.add_conditional_edges("check_missing", has_missing_fields, {
         "ask_missing_info": "ask_missing_info",
         "confirm": "confirm",
     })
+
     workflow.add_edge("ask_missing_info", END)
     workflow.add_edge("confirm", END)
+
+    # [수정] 확인 결과에 따른 라우팅 (새로운 의도면 다시 분류로!)
     workflow.add_conditional_edges("parse_confirmation", should_execute, {
         "execute": "execute",
         "cancel": "cancel",
+        "classify_intent": "classify_intent"
     })
+
     workflow.add_edge("execute", END)
     workflow.add_edge("cancel", END)
     workflow.add_edge("list_action", END)

@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     langfuse_host: str = ""
 
     token_limit_per_session: int = 100000
+    token_limit_reset_period: int = 86400  # 기본값: 24시간(초)
+
+    otel_exporter_otlp_endpoint: str = "http://localhost:54317"
+    otel_exporter_otlp_headers: str = ""
+    otel_enabled: bool = True
 
     lock_namespace_task: int = 1
     lock_namespace_schedule: int = 2

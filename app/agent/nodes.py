@@ -41,7 +41,14 @@ async def classify_intent(state: AgentState, llm) -> AgentState:
             intent = candidate
             break
 
-    return {"intent": intent}
+    # 새로운 의도가 파악되면 이전 작업의 찌꺼기를 청소합니다.
+    return {
+        "intent": intent,
+        "task_data": {},
+        "missing_fields": [],
+        "needs_confirmation": False,
+        "confirmed": False
+    }
 
 
 async def ask_missing_info(state: AgentState) -> AgentState:
@@ -114,19 +121,43 @@ async def execute_action(state: AgentState, tools_by_name: dict) -> AgentState:
     }
 
 
-async def parse_confirmation(state: AgentState) -> AgentState:
-    """사용자의 확인/취소 응답을 파악."""
+async def parse_confirmation(state: AgentState, llm) -> AgentState:
+    """LLM을 사용하여 사용자의 확인/취소/새로운 의도를 파악."""
     messages = state.get("messages", [])
     last_human = None
     for msg in reversed(messages):
         if isinstance(msg, HumanMessage):
-            last_human = msg.content.strip().lower()
+            last_human = msg.content
             break
 
-    positive = {"응", "네", "예", "yes", "y", "확인", "좋아", "ㅇ", "ㅇㅇ"}
-    if last_human in positive:
-        return {"confirmed": True}
-    return {"confirmed": False, "error": "cancelled"}
+    if not last_human:
+        return {"confirmed": False, "error": "no_input"}
+
+    prompt = f"""사용자의 답변이 이전 작업에 대한 '승인'인지 '취소'인지, 아니면 '새로운 질문'인지 분류하세요.
+    
+    [사용자 답변]: {last_human}
+    
+    다음 중 하나만 응답하세요:
+    - yes: 승인, 진행, 확인, 응, 그래, 좋아 등 긍정적인 반응
+    - no: 취소, 하지마, 관둬, 아니 등 부정적인 반응
+    - new_intent: 위의 확인/취소와 상관없는 새로운 질문이나 명령 (예: "목록 보여줘", "다른 거 해줘")
+    
+    응답:"""
+
+    response = await llm.ainvoke([
+        SystemMessage(content="단어 하나로만 응답하세요: yes, no, new_intent"),
+        HumanMessage(content=prompt)
+    ])
+    
+    result = response.content.strip().lower()
+    
+    if "yes" in result:
+        return {"confirmed": True, "error": None}
+    elif "new_intent" in result:
+        # 새로운 질문이면 컨펌 상태를 해제하고 다시 의도 분류로 가도록 유도
+        return {"confirmed": False, "needs_confirmation": False, "intent": "unknown", "error": "new_intent"}
+    else:
+        return {"confirmed": False, "error": "cancelled"}
 
 
 def route_intent(state: AgentState) -> str:
