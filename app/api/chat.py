@@ -62,10 +62,12 @@ async def get_history(session_id: str, request: Request, db: AsyncSession = Depe
     state = await request.app.state.saver.aget_tuple(config)
 
     messages = []
+    role_mapping = {"human": "user", "ai": "assistant"}
     if state and "messages" in state.values:
         for msg in state.values["messages"]:
+            mapped_role = role_mapping.get(msg.type, msg.type)
             messages.append({
-                "role": msg.type,
+                "role": mapped_role,
                 "content": msg.content,
             })
 
@@ -80,8 +82,8 @@ async def send_message(
     session_id: str,
     body: ChatMessageRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
     background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
 ):
     stmt = select(ChatSession).where(ChatSession.id == session_id)
     result = await db.execute(stmt)
