@@ -81,11 +81,12 @@ async def send_message(
     body: ChatMessageRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    background_tasks: BackgroundTasks = None,
+    background_tasks: BackgroundTasks,
 ):
     stmt = select(ChatSession).where(ChatSession.id == session_id)
     result = await db.execute(stmt)
-    if not result.scalar_one_or_none():
+    session = result.scalar_one_or_none()
+    if not session:
         raise HTTPException(status_code=404, detail="Session not found in database")
 
     redis = _get_redis_for_cost_guard()
@@ -167,20 +168,16 @@ async def send_message(
             break
 
     messages_count = len(result.get("messages", []))
-    if messages_count == 2 and background_tasks:
+    if messages_count == 2:
         history_for_title = ""
         for msg in result.get("messages", []):
             role = "사용자" if isinstance(msg, HumanMessage) else "AI"
             history_for_title += f"{role}: {msg.content}\n"
         background_tasks.add_task(generate_and_update_title, session_id, history_for_title)
 
-    stmt = select(ChatSession).where(ChatSession.id == session_id)
-    result = await db.execute(stmt)
-    session = result.scalar_one_or_none()
-    if session:
-        from datetime import datetime, timezone
-        session.updated_at = datetime.now(timezone.utc)
-        await db.commit()
+    from datetime import datetime, timezone
+    session.updated_at = datetime.now(timezone.utc)
+    await db.commit()
 
     return ChatMessageResponse(
         reply=last_ai_message or "응답을 생성하지 못했습니다.",
