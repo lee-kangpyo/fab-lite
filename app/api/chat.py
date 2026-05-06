@@ -72,8 +72,8 @@ async def get_history(session_id: str, request: Request, db: AsyncSession = Depe
 
     messages = []
     role_mapping = {"human": "user", "ai": "assistant"}
-    if checkpoint and "values" in checkpoint and "messages" in checkpoint["values"]:
-        for msg in checkpoint["values"]["messages"]:
+    if checkpoint and "channel_values" in checkpoint and "messages" in checkpoint["channel_values"]:
+        for msg in checkpoint["channel_values"]["messages"]:
             mapped_role = role_mapping.get(msg.type, msg.type)
             messages.append({
                 "role": mapped_role,
