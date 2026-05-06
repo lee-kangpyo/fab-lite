@@ -1,24 +1,26 @@
 from __future__ import annotations
 
 import os
-import uuid
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, Request
 from langchain_core.messages import AIMessage, HumanMessage
-from langgraph.checkpoint.memory import MemorySaver
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, desc
 
 from app.agent.graph import build_graph
+from app.api.chat_utils import generate_and_update_title
 from app.config import settings
+from app.database import get_db
+from app.models.chat import ChatSession
 from app.schemas.chat import (
     ChatMessageRequest,
     ChatMessageResponse,
     SessionCreateResponse,
     SessionHistoryResponse,
+    SessionListResponse,
 )
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
-
-_sessions: dict[str, object] = {}
 
 
 def _get_redis_for_cost_guard():
@@ -30,30 +32,61 @@ def _get_redis_for_cost_guard():
 
 
 @router.post("/sessions", response_model=SessionCreateResponse, status_code=201)
-async def create_session(request: Request):
-    print(f"\n[Debug] Creating session...")
-    session_id = str(uuid.uuid4())
-    
-    try:
-        if os.environ.get("TESTING"):
-            print("[Debug] Using MemorySaver (Testing mode)")
-            _sessions[session_id] = MemorySaver()
-        else:
-            print(f"[Debug] Using app.state.saver: {getattr(request.app.state, 'saver', 'MISSING')}")
-            _sessions[session_id] = request.app.state.saver
-        
-        print(f"[Debug] Session created: {session_id}")
-    except Exception as e:
-        print(f"[Debug] Error in create_session: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+async def create_session(db: AsyncSession = Depends(get_db)):
+    new_session = ChatSession()
+    db.add(new_session)
+    await db.commit()
+    await db.refresh(new_session)
+    return SessionCreateResponse(session_id=str(new_session.id))
 
-    return SessionCreateResponse(session_id=session_id)
+
+@router.get("/sessions", response_model=list[SessionListResponse])
+async def list_sessions(db: AsyncSession = Depends(get_db)):
+    stmt = select(ChatSession).order_by(desc(ChatSession.updated_at))
+    result = await db.execute(stmt)
+    sessions = result.scalars().all()
+    return [
+        {"id": str(s.id), "title": s.title, "created_at": s.created_at, "updated_at": s.updated_at}
+        for s in sessions
+    ]
+
+
+@router.get("/sessions/{session_id}/history", response_model=SessionHistoryResponse)
+async def get_history(session_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    stmt = select(ChatSession).where(ChatSession.id == session_id)
+    result = await db.execute(stmt)
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Session not found in database")
+
+    config = {"configurable": {"thread_id": session_id}}
+    state = await request.app.state.saver.aget_tuple(config)
+
+    messages = []
+    if state and "messages" in state.values:
+        for msg in state.values["messages"]:
+            messages.append({
+                "role": msg.type,
+                "content": msg.content,
+            })
+
+    return SessionHistoryResponse(
+        session_id=session_id,
+        messages=messages,
+    )
 
 
 @router.post("/sessions/{session_id}/message", response_model=ChatMessageResponse)
-async def send_message(session_id: str, body: ChatMessageRequest, request: Request):
-    if session_id not in _sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
+async def send_message(
+    session_id: str,
+    body: ChatMessageRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    background_tasks: BackgroundTasks = None,
+):
+    stmt = select(ChatSession).where(ChatSession.id == session_id)
+    result = await db.execute(stmt)
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Session not found in database")
 
     redis = _get_redis_for_cost_guard()
 
@@ -65,10 +98,9 @@ async def send_message(session_id: str, body: ChatMessageRequest, request: Reque
             detail=f"세션 토큰 한도 초과 (한도: {settings.token_limit_per_session})",
         )
 
-    checkpointer = _sessions[session_id]
+    checkpointer = request.app.state.saver
     graph = build_graph(checkpointer=checkpointer)
 
-    # 1. 텔레메트리 및 콜백 준비 (테스트 모드가 아닐 때만)
     langfuse_handler = None
     token_counter = None
     otel_trace_id = None
@@ -84,13 +116,11 @@ async def send_message(session_id: str, body: ChatMessageRequest, request: Reque
 
         correlation_id = get_correlation_id(request)
         tracer = trace.get_tracer("fabrix-lite")
-        
-        # OTel 스팬 시작 및 ID 추출
+
         span = trace.get_current_span()
         if not span.get_span_context().is_valid:
-            # 새로운 스팬 시작 (이미 진행 중인 게 없다면)
             span = tracer.start_span("chat.send_message")
-        
+
         otel_trace_id = f"{span.get_span_context().trace_id:032x}"
         span.set_attribute("session_id", session_id)
         span.set_attribute("correlation_id", correlation_id)
@@ -102,7 +132,6 @@ async def send_message(session_id: str, body: ChatMessageRequest, request: Reque
             redis, session_id, reset_period=settings.token_limit_reset_period
         )
 
-    # 2. 그래프 실행 설정 (준비된 ID들 주입)
     config: dict = {
         "configurable": {"thread_id": session_id},
         "metadata": {
@@ -115,7 +144,6 @@ async def send_message(session_id: str, body: ChatMessageRequest, request: Reque
 
     try:
         from langfuse import propagate_attributes
-        # 랭퓨즈 세션 추적 활성화
         with propagate_attributes(session_id=session_id):
             result = await graph.ainvoke(
                 {"messages": [HumanMessage(content=body.message)]},
@@ -132,36 +160,28 @@ async def send_message(session_id: str, body: ChatMessageRequest, request: Reque
             await token_counter.await_pending()
         await redis.aclose()
 
-    # 마지막 AI 메시지 추출
     last_ai_message = None
     for msg in reversed(result.get("messages", [])):
         if isinstance(msg, AIMessage):
             last_ai_message = msg.content
             break
 
+    messages_count = len(result.get("messages", []))
+    if messages_count == 2 and background_tasks:
+        history_for_title = ""
+        for msg in result.get("messages", []):
+            role = "사용자" if isinstance(msg, HumanMessage) else "AI"
+            history_for_title += f"{role}: {msg.content}\n"
+        background_tasks.add_task(generate_and_update_title, session_id, history_for_title)
+
+    stmt = select(ChatSession).where(ChatSession.id == session_id)
+    result = await db.execute(stmt)
+    session = result.scalar_one_or_none()
+    if session:
+        from datetime import datetime, timezone
+        session.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+
     return ChatMessageResponse(
         reply=last_ai_message or "응답을 생성하지 못했습니다.",
-    )
-
-
-@router.get("/sessions/{session_id}/history", response_model=SessionHistoryResponse)
-async def get_history(session_id: str):
-    if session_id not in _sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    checkpointer = _sessions[session_id]
-    graph = build_graph(checkpointer=checkpointer)
-    config = {"configurable": {"thread_id": session_id}}
-
-    snapshot = await graph.aget_state(config)
-    messages = []
-    for msg in snapshot.values.get("messages", []):
-        messages.append({
-            "role": msg.type,
-            "content": msg.content,
-        })
-
-    return SessionHistoryResponse(
-        session_id=session_id,
-        messages=messages,
     )

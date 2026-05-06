@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -16,3 +18,10 @@ class SessionCreateResponse(BaseModel):
 class SessionHistoryResponse(BaseModel):
     session_id: str
     messages: list[dict]
+
+
+class SessionListResponse(BaseModel):
+    id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
