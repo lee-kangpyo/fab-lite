@@ -34,17 +34,28 @@ async def classify_intent(state: AgentState, llm) -> AgentState:
             }
         }
 
-    system_prompt = """사용자 메시지의 의도를 다음 중 하나로 분류하세요:
-- todo: 태스크 생성, 수정, 삭제, 조회 등 작업 요청
-- unknown: 의도를 파악할 수 없는 경우
-- other: 그 외의 일반 대화
+    system_prompt = """[SYSTEM] 당신은 의도 분류 전용 시스템입니다. 절대로 대화하지 마세요.
 
-응답은 반드시 유효한 JSON이어야 합니다:
+사용자 메시지의 의도를 다음 중 하나로 분류하세요:
+- todo: 태스크 생성, 수정, 삭제, 조회 등 작업 요청
+- unknown: 의도를 파악할 수 없는 경우 (전혀 관련 없는 내용, 외국어 등)
+- other: 일반 대화, 이전 대화와 연결된 말("하나더 있어", "응", "아니 그게 아니라" 등), 불완전한 입력
+
+중요: 사용자가 이전 대화 맥락과 연결된 말을 하거나, 불완전한 입력을 준 경우에는 todo가 아닌 other로 분류하세요. 예:
+- "하나더 있어" → other
+- "아니 진행중에 테스트2가 하나더 있다고" → todo (태스크 정보 제공)
+- "응" → other
+- "테스트2를 진행중으로 이동해줘" → todo
+
+[CRITICAL] 응답은 반드시 아래 JSON 형식만 사용하세요. 어떤 경우에도 JSON 외의 텍스트(설명, 질문, 생각, markdown 등)를 출력하지 마세요:
 {"intent": "todo"|"unknown"|"other", "confidence": 0.0~1.0, "description": "..."}"""
 
+    # Human 메시지만 추출하여 맥락 제공 (AI 메시지는 제외하여 classifier가 대화 모드로 빠지지 않도록 함)
+    human_messages = [msg for msg in messages if isinstance(msg, HumanMessage)]
+    
     response = await llm.ainvoke([
         SystemMessage(content=system_prompt),
-        HumanMessage(content=last_human)
+        *human_messages[-3:],  # 최근 3개 Human 메시지만 전달
     ])
 
     content = response.content.strip()
@@ -77,9 +88,20 @@ async def classify_intent(state: AgentState, llm) -> AgentState:
 async def agent(state: AgentState, llm):
     """ReAct 루프의 핵심 노드. LLM이 도구를 선택하거나 직접 응답합니다."""
     classification = state.get("classification")
-    if not classification or classification.get("intent") != "todo":
+    intent = classification.get("intent") if classification else "unknown"
+
+    if intent == "unknown":
         return {
             "messages": [AIMessage(content="죄송합니다, 이해하지 못했습니다. 태스크 관련 명령을 입력해주세요.")]
+        }
+
+    if intent == "other":
+        response = await llm.ainvoke([
+            SystemMessage(content="당신은 친절한 태스크 관리 어시스턴트입니다. 이전 대화 맥락을 바탕으로 사용자의 말을 이해하고 자연스럽게 응답하세요. 사용자가 불완전한 말을 하면 상황에 맞게 물어보거나 대화를 이어가세요."),
+            *state["messages"],
+        ])
+        return {
+            "messages": [response]
         }
 
     tools = get_agent_tools()
