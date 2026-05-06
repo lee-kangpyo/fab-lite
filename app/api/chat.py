@@ -68,17 +68,19 @@ async def get_history(session_id: str, request: Request, db: AsyncSession = Depe
         raise HTTPException(status_code=404, detail="Session not found in database")
 
     config = {"configurable": {"thread_id": session_id}}
-    checkpoint = await request.app.state.saver.aget(config)
+    state = await request.app.state.saver.aget_tuple(config)
 
     messages = []
     role_mapping = {"human": "user", "ai": "assistant"}
-    if checkpoint and "channel_values" in checkpoint and "messages" in checkpoint["channel_values"]:
-        for msg in checkpoint["channel_values"]["messages"]:
-            mapped_role = role_mapping.get(msg.type, msg.type)
-            messages.append({
-                "role": mapped_role,
-                "content": msg.content,
-            })
+    if state and state.checkpoint and "channel_values" in state.checkpoint:
+        channel_values = state.checkpoint["channel_values"]
+        if "messages" in channel_values:
+            for msg in channel_values["messages"]:
+                mapped_role = role_mapping.get(msg.type, msg.type)
+                messages.append({
+                    "role": mapped_role,
+                    "content": msg.content,
+                })
 
     return SessionHistoryResponse(
         session_id=session_id,
