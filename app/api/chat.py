@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, Request
 from langchain_core.messages import AIMessage, HumanMessage
@@ -19,6 +20,13 @@ from app.schemas.chat import (
     SessionHistoryResponse,
     SessionListResponse,
 )
+
+
+def _validate_uuid(session_id: str) -> None:
+    try:
+        uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session ID format")
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -53,18 +61,19 @@ async def list_sessions(db: AsyncSession = Depends(get_db)):
 
 @router.get("/sessions/{session_id}/history", response_model=SessionHistoryResponse)
 async def get_history(session_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    _validate_uuid(session_id)
     stmt = select(ChatSession).where(ChatSession.id == session_id)
     result = await db.execute(stmt)
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Session not found in database")
 
     config = {"configurable": {"thread_id": session_id}}
-    state = await request.app.state.saver.aget_tuple(config)
+    checkpoint = await request.app.state.saver.aget_tuple(config)
 
     messages = []
     role_mapping = {"human": "user", "ai": "assistant"}
-    if state and "messages" in state.values:
-        for msg in state.values["messages"]:
+    if checkpoint and checkpoint.checkpoint and "values" in checkpoint.checkpoint:
+        for msg in checkpoint.checkpoint["values"]["messages"]:
             mapped_role = role_mapping.get(msg.type, msg.type)
             messages.append({
                 "role": mapped_role,
@@ -85,6 +94,7 @@ async def send_message(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
+    _validate_uuid(session_id)
     stmt = select(ChatSession).where(ChatSession.id == session_id)
     result = await db.execute(stmt)
     session = result.scalar_one_or_none()
