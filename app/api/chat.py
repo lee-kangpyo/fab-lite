@@ -18,7 +18,7 @@ from app.schemas.chat import (
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
-_sessions: dict[str, any] = {}
+_sessions: dict[str, object] = {}
 
 
 def _get_redis_for_cost_guard():
@@ -141,9 +141,6 @@ async def send_message(session_id: str, body: ChatMessageRequest, request: Reque
 
     return ChatMessageResponse(
         reply=last_ai_message or "응답을 생성하지 못했습니다.",
-        messages=result["messages"],
-        intent=result.get("intent"),
-        needs_confirmation=result.get("needs_confirmation", False),
     )
 
 

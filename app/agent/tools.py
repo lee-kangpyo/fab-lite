@@ -31,7 +31,11 @@ async def create_task(title: str, description: str = "", priority: str = "medium
 
 @tool
 async def update_task(task_id: str, title: str | None = None, description: str | None = None, priority: str | None = None, status: str | None = None) -> str:
-    """기존 태스크를 수정합니다. task_id는 필수, 나머지는 선택적으로 변경."""
+    """
+    기존 태스크의 정보를 수정합니다. task_id는 필수입니다.
+    - 상태를 변경(이동)할 때는 반드시 status 파라미터('todo', 'in_progress', 'done')를 명시해야 합니다.
+    - 제목(title), 설명(description), 우선순위(priority) 등 변경하고 싶은 필드만 선택적으로 입력할 수 있습니다.
+    """
     try:
         task_uuid = uuid.UUID(task_id)
     except (ValueError, AttributeError):
@@ -40,6 +44,11 @@ async def update_task(task_id: str, title: str | None = None, description: str |
         task = await session.get(Task, task_uuid)
         if not task:
             return json.dumps({"status": "error", "message": "Task not found"}, ensure_ascii=False)
+        if all(v is None for v in [title, description, priority, status]):
+            return json.dumps({
+                "status": "error", 
+                "message": "수정할 값이 입력되지 않았습니다. title, description, priority, status 중 하나 이상을 입력해주세요."
+            }, ensure_ascii=False)
         if title is not None:
             task.title = title
         if description is not None:

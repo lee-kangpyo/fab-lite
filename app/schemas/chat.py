@@ -7,8 +7,6 @@ class ChatMessageRequest(BaseModel):
 
 class ChatMessageResponse(BaseModel):
     reply: str
-    intent: str | None = None
-    needs_confirmation: bool = False
 
 
 class SessionCreateResponse(BaseModel):
