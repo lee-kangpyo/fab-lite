@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, Request
 from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 
@@ -27,6 +29,15 @@ def _validate_uuid(session_id: str) -> None:
         uuid.UUID(session_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid session ID format")
+
+
+def _clean_content(content: str) -> str:
+    if not isinstance(content, str):
+        return str(content)
+    # Remove <think>...</think> blocks
+    cleaned = re.sub(r"<think.*?>.*?</think\s*>", "", content, flags=re.DOTALL)
+    return cleaned.strip()
+
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -76,10 +87,18 @@ async def get_history(session_id: str, request: Request, db: AsyncSession = Depe
         channel_values = state.checkpoint["channel_values"]
         if "messages" in channel_values:
             for msg in channel_values["messages"]:
+                # Filter out tool messages and messages with empty content (like tool calls)
+                if msg.type not in ["human", "ai"]:
+                    continue
+                
+                cleaned_content = _clean_content(msg.content)
+                if not cleaned_content:
+                    continue
+
                 mapped_role = role_mapping.get(msg.type, msg.type)
                 messages.append({
                     "role": mapped_role,
-                    "content": msg.content,
+                    "content": cleaned_content,
                 })
 
     return SessionHistoryResponse(
@@ -159,11 +178,29 @@ async def send_message(
 
     try:
         from langfuse import propagate_attributes
+
+        # 현재 세션이 인터럽트(승인 대기) 상태인지 확인
+        # graph.aget_state()는 tasks 속성이 있는 StateSnapshot을 반환함
+        current_graph_state = await graph.aget_state(config)
+        is_interrupted = (
+            current_graph_state is not None
+            and current_graph_state.tasks
+            and any(t.interrupts for t in current_graph_state.tasks)
+        )
+
         with propagate_attributes(session_id=session_id):
-            result = await graph.ainvoke(
-                {"messages": [HumanMessage(content=body.message)]},
-                config,
-            )
+            if is_interrupted:
+                # 인터럽트 지점에서 사용자 답변으로 재개
+                result = await graph.ainvoke(
+                    Command(resume=body.message),
+                    config,
+                )
+            else:
+                # 새 메시지로 그래프 실행
+                result = await graph.ainvoke(
+                    {"messages": [HumanMessage(content=body.message)]},
+                    config,
+                )
     except Exception as e:
         if not os.environ.get("TESTING"):
             from app.core.telemetry import get_langfuse_client
@@ -178,8 +215,9 @@ async def send_message(
     last_ai_message = None
     for msg in reversed(result.get("messages", [])):
         if isinstance(msg, AIMessage):
-            last_ai_message = msg.content
-            break
+            last_ai_message = _clean_content(msg.content)
+            if last_ai_message: # Ensure we got a real reply, not just a tool call thought
+                break
 
     messages_count = len(result.get("messages", []))
     if messages_count == 2:
@@ -193,6 +231,18 @@ async def send_message(
     session.updated_at = datetime.now(timezone.utc)
     await db.commit()
 
+    if not last_ai_message:
+        # Check if there are tool calls (likely waiting for interrupt confirmation)
+        last_ai_with_tool = next((msg for msg in reversed(result.get("messages", [])) if isinstance(msg, AIMessage) and msg.tool_calls), None)
+        if last_ai_with_tool:
+            tool_name = last_ai_with_tool.tool_calls[0]["name"]
+            if tool_name == "delete_task":
+                last_ai_message = "태스크를 삭제하시겠습니까? 삭제하시려면 '응' 또는 '예'라고 답해주세요."
+            else:
+                last_ai_message = f"'{tool_name}' 작업을 진행하기 위해 승인이 필요합니다. 계속할까요?"
+        else:
+            last_ai_message = "응답을 생성하지 못했습니다."
+
     return ChatMessageResponse(
-        reply=last_ai_message or "응답을 생성하지 못했습니다.",
+        reply=last_ai_message,
     )

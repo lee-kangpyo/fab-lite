@@ -95,50 +95,76 @@ async def agent(state: AgentState, llm):
             "messages": [AIMessage(content="죄송합니다, 이해하지 못했습니다. 태스크 관련 명령을 입력해주세요.")]
         }
 
+    # 시스템 메시지 구성: 도구 상시 사용 가능하도록 유도
+    system_msg = "당신은 친절한 태스크 관리 어시스턴트입니다."
     if intent == "other":
-        response = await llm.ainvoke([
-            SystemMessage(content="당신은 친절한 태스크 관리 어시스턴트입니다. 이전 대화 맥락을 바탕으로 사용자의 말을 이해하고 자연스럽게 응답하세요. 사용자가 불완전한 말을 하면 상황에 맞게 물어보거나 대화를 이어가세요."),
-            *state["messages"],
-        ])
-        return {
-            "messages": [response]
-        }
+        system_msg += " 이전 대화 맥락을 바탕으로 사용자의 말을 이해하고 자연스럽게 응답하세요."
 
     tools = get_agent_tools()
     bound_llm = llm.bind_tools(tools)
 
-    response = await bound_llm.ainvoke(state["messages"])
-    message_with_tools = response
-
-    if hasattr(response, "tool_calls") and response.tool_calls:
-        tool_call = response.tool_calls[0]
-
-        if tool_call["name"] == "delete_task":
-            interrupt_payload = {
-                "message": "정말 삭제하시겠습니까?",
-                "target": tool_call["args"]
-            }
-            user_input = interrupt(interrupt_payload)
-            if user_input != "응":
-                return {
-                    "messages": [AIMessage(content="삭제가 취소되었습니다.")]
-                }
+    # 대화 맥락에 시스템 메시지 추가
+    messages = [SystemMessage(content=system_msg)] + state["messages"]
+    response = await bound_llm.ainvoke(messages)
 
     return {
         "messages": [response]
     }
 
 
-def should_continue(state: AgentState) -> Literal["tool_node", END]:
-    """tool_call 존재 여부에 따라 다음 노드를 결정합니다."""
+async def human_approval(state: AgentState) -> AgentState:
+    """도구 실행 전 사용자 승인을 기다리는 전용 노드입니다."""
+    messages = state.get("messages", [])
+    if not messages:
+        return state
+
+    last_msg = messages[-1]
+    if not (isinstance(last_msg, AIMessage) and last_msg.tool_calls):
+        return state
+
+    tool_call = last_msg.tool_calls[0]
+    # delete_task 실행 전에만 멈춰서 승인을 받음
+    if tool_call["name"] == "delete_task":
+        interrupt_payload = {
+            "message": "정말 삭제하시겠습니까?",
+            "target": tool_call["args"]
+        }
+        # 여기서 실행을 멈추고 사용자 대답을 기다림
+        user_input = interrupt(interrupt_payload)
+        
+        # 긍정적인 답변이 아니면 루프를 종료시키기 위한 플래그성 메시지 반환
+        if user_input not in ["응", "예", "그래", "확인", "yes"]:
+            return {
+                "messages": [AIMessage(content="삭제 요청이 취소되었습니다.")]
+            }
+            
+    return state
+
+
+def should_continue(state: AgentState) -> Literal["human_approval", END]:
+    """도구 호출 여부에 따라 승인 노드로 갈지 결정합니다."""
     messages = state.get("messages", [])
     if not messages:
         return END
 
     last_msg = messages[-1]
-    if isinstance(last_msg, AIMessage) and hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
-        return "tool_node"
+    if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
+        return "human_approval"
     return END
+
+
+def should_execute(state: AgentState) -> Literal["tool_node", END]:
+    """승인 결과를 확인하여 실제 도구를 실행할지 결정합니다."""
+    messages = state.get("messages", [])
+    if not messages:
+        return END
+
+    last_msg = messages[-1]
+    # 만약 "취소되었습니다" 메시지가 있다면 실행하지 않고 종료
+    if isinstance(last_msg, AIMessage) and "취소" in last_msg.content:
+        return END
+        
+    return "tool_node"
 
 
 def build_graph(checkpointer=None):
@@ -155,14 +181,23 @@ def build_graph(checkpointer=None):
 
     workflow.add_node("classify_intent", partial(classify_intent, llm=llm))
     workflow.add_node("agent", partial(agent, llm=llm))
+    workflow.add_node("human_approval", human_approval)
     workflow.add_node("tool_node", tool_node)
 
     workflow.set_entry_point("classify_intent")
     workflow.add_edge("classify_intent", "agent")
 
+    # 에이전트 답변에 도구가 있으면 승인 단계로 이동
     workflow.add_conditional_edges(
         "agent",
         should_continue,
+        {"human_approval": "human_approval", END: END}
+    )
+
+    # 승인 노드에서 승인이 완료되면 실제 도구 실행
+    workflow.add_conditional_edges(
+        "human_approval",
+        should_execute,
         {"tool_node": "tool_node", END: END}
     )
 
