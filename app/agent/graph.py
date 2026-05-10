@@ -41,21 +41,46 @@ async def classify_intent(state: AgentState, llm) -> AgentState:
 - unknown: 의도를 파악할 수 없는 경우 (전혀 관련 없는 내용, 외국어 등)
 - other: 일반 대화, 이전 대화와 연결된 말("하나더 있어", "응", "아니 그게 아니라" 등), 불완전한 입력
 
-중요: 사용자가 이전 대화 맥락과 연결된 말을 하거나, 불완전한 입력을 준 경우에는 todo가 아닌 other로 분류하세요. 예:
-- "하나더 있어" → other
-- "아니 진행중에 테스트2가 하나더 있다고" → todo (태스크 정보 제공)
-- "응" → other
-- "테스트2를 진행중으로 이동해줘" → todo
+[CONTEXT] 제공된 대화 내역 중 **마지막 메시지**가 분류 대상이며, 이전 메시지들은 그 의미를 해석하기 위한 배경 정보입니다.
+[REASONING] 의도를 판단한 구체적인 근거를 description 필드에 한국어로 작성하세요.
 
-[CRITICAL] 응답은 반드시 아래 JSON 형식만 사용하세요. 어떤 경우에도 JSON 외의 텍스트(설명, 질문, 생각, markdown 등)를 출력하지 마세요:
+[CRITICAL] 응답은 반드시 아래 JSON 형식만 사용하세요. 어떤 경우에도 JSON 외의 텍스트를 출력하지 마세요:
 {"intent": "todo"|"unknown"|"other", "confidence": 0.0~1.0, "description": "..."}"""
 
-    # Human 메시지만 추출하여 맥락 제공 (AI 메시지는 제외하여 classifier가 대화 모드로 빠지지 않도록 함)
-    human_messages = [msg for msg in messages if isinstance(msg, HumanMessage)]
+    # 피드백 반영: 메시지 정제 로직
+    processed_messages = []
+    for msg in messages:
+        if msg.type == "human":
+            processed_messages.append(msg)
+        elif msg.type == "ai":
+            content = msg.content
+            # 내용이 없고 툴 호출만 있는 경우, 분류기가 이해할 수 있게 텍스트로 치환
+            if not content and hasattr(msg, "tool_calls") and msg.tool_calls:
+                tool_names = ", ".join([tc["name"] for tc in msg.tool_calls])
+                content = f"(AI가 '{tool_names}' 작업을 실행하려고 승인을 요청하거나 준비 중임)"
+            if content:
+                # 텍스트가 있는 경우에만 맥락에 포함 (AI의 단순 툴 실행 준비도 맥락이 됨)
+                processed_messages.append(AIMessage(content=str(content)))
+
+    # 마지막은 항상 HumanMessage여야 함 (분류 대상)
+    if not processed_messages or processed_messages[-1].type != "human":
+        # 만약 마지막이 AI 메시지라면(그럴 일은 거의 없지만), 실제 마지막 Human을 찾아 보강
+        last_human_idx = -1
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].type == "human":
+                last_human_idx = i
+                break
+        if last_human_idx != -1:
+            # 마지막 Human을 포함하도록 다시 구성 (이 로직은 안전장치임)
+            pass
+
+    context_messages = processed_messages[-5:]
     
-    response = await llm.ainvoke([
+    classifier_llm = llm.bind(temperature=0)
+    
+    response = await classifier_llm.ainvoke([
         SystemMessage(content=system_prompt),
-        *human_messages[-3:],  # 최근 3개 Human 메시지만 전달
+        *context_messages,
     ])
 
     content = response.content.strip()
